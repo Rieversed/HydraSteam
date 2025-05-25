@@ -9,25 +9,61 @@ import json
 import re
 import signal # Import the signal module
 import time  # For rate limiting
+import random  # For random user agent selection
 from urllib.parse import urlparse, urljoin
+import argparse
+import sys
+from tqdm import tqdm  # For rate limiting
 
 def extract_direct_download(url, session):
     """Extract direct download link from supported file hosting services."""
     try:
         # Add a small delay to avoid hitting rate limits
-        time.sleep(1)
+        time.sleep(2)  # Increased delay to be more polite
+        
+        # Rotate user agents to appear more like different browsers
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15'
+        ]
         
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
+            'User-Agent': random.choice(user_agents),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
             'Referer': 'https://steamrip.com/',
             'DNT': '1',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'cross-site',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
         }
         
-        response = session.get(url, headers=headers, timeout=30, allow_redirects=True)
+        # Try to get the page with our headers
+        try:
+            response = session.get(
+                url, 
+                headers=headers, 
+                timeout=30, 
+                allow_redirects=True,
+                verify=True
+            )
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 403:
+                print(f"Access denied (403) for {url} - using original URL")
+                return url  # Return original URL if we get 403
+            raise  # Re-raise other HTTP errors
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching {url}: {e} - using original URL")
+            return url  # Return original URL on other request errors
         response.raise_for_status()
         
         domain = urlparse(url).netloc.lower()
@@ -292,39 +328,43 @@ def extract_game_details(game_url, session):
     
     for url in download_urls:
         try:
+            # Skip empty URLs
+            if not url or not url.strip():
+                continue
+                
             # Normalize the URL first
+            url = url.strip()
             if url.startswith('//'):
                 url = 'https:' + url
             elif not url.startswith(('http://', 'https://')):
                 url = 'https://' + url
-                
+            
             # Skip if we've already processed this URL
             if url in seen_urls:
                 continue
                 
-            seen_urls.add(url)
-            
-            # Check if this is a URL we need to follow
             domain = urlparse(url).netloc.lower()
-            if 'megadb.net' in domain or 'buzzheavier.com' in domain:
-                print(f"Following URL to find direct download: {url}")
-                direct_url = extract_direct_download(url, session)
-                if direct_url and direct_url != url:
-                    print(f"Found direct download URL: {direct_url}")
-                    if direct_url not in seen_urls:
-                        processed_uris.append(direct_url)
-                        seen_urls.add(direct_url)
-                    continue
             
-            # For all other URLs, just add them as-is
-            processed_uris.append(url)
+            # Skip direct link extraction for megadb.net and buzzheavier.com
+            # These will be handled in save_downloads
+            if any(d in domain for d in ['megadb.net', 'buzzheavier.com']):
+                continue  # Skip processing these URLs
             
-        except Exception as e:
-            print(f"Error processing URL {url}: {e}")
-            # Add the original URL if there was an error
+            # Add the URL to our processed list if it's not a duplicate
             if url not in seen_urls:
                 processed_uris.append(url)
                 seen_urls.add(url)
+            
+        except Exception as e:
+            print(f"\n⚠️ Error processing URL {url}: {e}")
+            # Add the original URL if there was an error and we haven't seen it
+            if url and url not in seen_urls:
+                processed_uris.append(url)
+                seen_urls.add(url)
+    
+    # Print summary of processed URLs
+    if processed_uris:
+        print(f"\nℹ️ Found {len(processed_uris)} unique download URLs")
     
     # Clean up the title by removing 'Free Download' text
     clean_title = title_str.replace(' Free Download', '').replace(' free download', '').strip()
@@ -413,34 +453,64 @@ def load_existing_downloads(filepath):
         print(f"Error loading {filepath}: {e}. Starting with an empty list.")
         return []
 
-def save_downloads(filepath, downloads_data):
+def save_downloads(filepath, downloads_data, broad_filepath=None):
+    """
+    Save the downloads data to JSON files, separating megadb/buzzheavier links into a separate file.
+    """
     try:
-        # First, try to read the existing data to preserve any non-downloads fields
-        existing_data = {}
-        if os.path.exists(filepath):
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    existing_data = json.load(f)
-            except (json.JSONDecodeError, IOError) as e:
-                print(f"Warning: Could not read existing file {filepath}: {e}. Creating a new one.")
-                existing_data = {}
+        # Separate downloads into main and broad lists
+        main_downloads = []
+        broad_downloads = []
         
-        # Ensure we have the basic structure
-        if not isinstance(existing_data, dict):
-            existing_data = {}
+        for game in downloads_data:
+            if not game.get('uris'):
+                continue
+                
+            # Create copies for main and broad
+            main_game = game.copy()
+            broad_game = game.copy()
+            main_uris = []
+            broad_uris = []
+            
+            # Separate URIs
+            for uri in game['uris']:
+                if any(d in uri.lower() for d in ['megadb.net', 'buzzheavier.com']):
+                    broad_uris.append(uri)
+                else:
+                    main_uris.append(uri)
+            
+            # Add to main downloads if it has any non-broad URIs
+            if main_uris:
+                main_game['uris'] = main_uris
+                main_downloads.append(main_game)
+            
+            # Add to broad downloads if it has any broad URIs
+            if broad_uris and broad_filepath:
+                broad_game['uris'] = broad_uris
+                broad_downloads.append(broad_game)
         
-        # Update the downloads list while preserving other data
-        existing_data["name"] = existing_data.get("name", "HydraSteam")
-        existing_data["downloads"] = downloads_data
+        # Save main downloads (only non-broad URIs)
+        if filepath:
+            os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump({"name": "HydraSteam", "downloads": main_downloads}, 
+                         f, ensure_ascii=False, indent=2, sort_keys=True)
+            print(f"✅ Saved {len(main_downloads)} items to {filepath}")
         
-        # Write the updated data back to the file
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(existing_data, f, indent=4, ensure_ascii=False)
-        
-        print(f"Successfully saved {len(downloads_data)} items to {filepath}")
+        # Save broad downloads (only broad URIs)
+        if broad_filepath and broad_downloads:
+            os.makedirs(os.path.dirname(os.path.abspath(broad_filepath)), exist_ok=True)
+            with open(broad_filepath, 'w', encoding='utf-8') as f:
+                json.dump({"name": "HydraSteam Broad", "downloads": broad_downloads},
+                         f, ensure_ascii=False, indent=2, sort_keys=True)
+            print(f"✅ Saved {len(broad_downloads)} items to {broad_filepath}")
+            
         return True
+        
     except Exception as e:
-        print(f"Error writing to {filepath}: {e}")
+        print(f"❌ Error saving files: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def git_commit_and_push(filepath, commit_message):
@@ -461,7 +531,6 @@ def git_commit_and_push(filepath, commit_message):
             subprocess.run(["git", "commit", "-m", commit_message], check=True)
             # Ensure the remote 'origin' is set to the GIT_REPO_URL with credentials
             # It's safer to set this once manually or ensure the clone was done with the tokenized URL
-            # Forcing it here can be risky if the remote name is different.
             # subprocess.run(["git", "remote", "set-url", "origin", GIT_REPO_URL], check=True)
             subprocess.run(["git", "push"], check=True) # Assumes 'origin' is correctly configured
             print(f"Successfully committed and pushed changes to GitHub for {filepath}")
@@ -474,27 +543,70 @@ def git_commit_and_push(filepath, commit_message):
     except FileNotFoundError:
         print("Git command not found. Ensure Git is installed and in your PATH.")
 
+def save_progress(progress_data, filepath='scraper_progress.json'):
+    """Save progress data to a file."""
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(progress_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Could not save progress: {e}")
+
+def load_progress(filepath='scraper_progress.json'):
+    """Load progress data from a file."""
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Could not load progress: {e}")
+    return {
+        'processed_urls': [],
+        'success_count': 0,
+        'error_count': 0,
+        'last_save': 0
+    }
+
 def main(local_html_path=None):
     print("Starting scraper...")
+    
+    # Define file paths
+    main_json_path = JSON_FILE_PATH
+    broad_json_path = os.path.join(os.path.dirname(JSON_FILE_PATH), 'hydrasteam_broad.json')
+    print(f"Main output: {main_json_path}")
+    print(f"Broad output: {broad_json_path}")
+    
+    # Create JSON file if it doesn't exist
     create_json_if_not_exists()
+    
+    # Load existing downloads
     existing_downloads = load_existing_downloads(JSON_FILE_PATH)
-    existing_titles = {game['title'] for game in existing_downloads}
+    print(f"Loaded {len(existing_downloads)} existing downloads from {JSON_FILE_PATH}")
+    
+    # Load progress if exists
+    progress_file = 'scraper_progress.json'
+    progress = load_progress(progress_file)
+    processed_urls = set(progress.get('processed_urls', []))
+    success_count = progress.get('success_count', 0)
+    error_count = progress.get('error_count', 0)
+    last_save = progress.get('last_save', 0)
+    
     new_games_found = 0
     updated_games_count = 0
     all_downloads = list(existing_downloads) # Start with existing ones
 
     # Signal handler for graceful exit on Ctrl+C
     def signal_handler(sig, frame):
-        print('\nCtrl+C detected. Saving progress and exiting...')
-        if new_games_found > 0 or updated_games_count > 0:
-            print(f"Saving {len(all_downloads)} games to {JSON_FILE_PATH} before exit...")
-            save_downloads(JSON_FILE_PATH, all_downloads)
-            # Optionally, you might want to commit here too, but it could be slow
-            # commit_message = f"Autosave on interrupt: {new_games_found} new, {updated_games_count} updated games."
-            # git_commit_and_push(JSON_FILE_PATH, commit_message)
-        else:
-            print("No new or updated games to save on exit.")
-        exit(0)
+        print("\n\n Script interrupted! Saving progress...")
+        if 'processed_urls' in globals() and 'success_count' in globals() and 'error_count' in globals():
+            save_progress({
+                'processed_urls': list(processed_urls),
+                'success_count': success_count,
+                'error_count': error_count,
+                'last_save': time.time()
+            }, progress_file)
+            print(f"Progress saved. Success: {success_count if 'success_count' in globals() else 0}, "
+                  f"Errors: {error_count if 'error_count' in globals() else 0}")
+        sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)
 
@@ -572,45 +684,120 @@ def main(local_html_path=None):
     # Create a session object to reuse TCP connections
     with requests.Session() as session:
         session.headers.update(HEADERS) # Set headers for the session
+        
+        # Set up signal handler for graceful shutdown
+        def signal_handler(sig, frame):
+            print("\n\n Script interrupted! Saving progress...")
+            try:
+                if 'processed_urls' in globals() and 'success_count' in globals() and 'error_count' in globals():
+                    save_progress({
+                        'processed_urls': list(processed_urls),
+                        'success_count': success_count,
+                        'error_count': error_count,
+                        'last_save': time.time()
+                    }, progress_file)
+                    print(f"Progress saved. Success: {success_count}, Errors: {error_count}")
+            except Exception as e:
+                print(f"Error saving progress: {e}")
+            sys.exit(0)
+            
+        signal.signal(signal.SIGINT, signal_handler)
 
         try:
-            for idx, game_url in enumerate(game_links):
-                print(f"\nProcessing {idx+1}/{len(game_links)}: {game_url}")
-                game_data = parse_game_page(game_url, session)
-                
-                if game_data:
-                    # Normalize the title for comparison
-                    game_title = game_data.get('title', '').strip()
-                    if not game_title:
-                        print("Warning: Game data has no title, skipping.")
-                        continue
-                        
-                    game_title_lower = game_title.lower()
+            total_games = len(game_links)
+            processed_count = 0
+            success_count = 0
+            error_count = 0
+            start_time = time.time()
+            
+            print(f"\n🚀 Starting to process {total_games} games...\n")
+            
+            for idx, game_url in enumerate(game_links, 1):
+                # Skip already processed URLs
+                if game_url in processed_urls:
+                    continue
                     
-                    # Check if game already exists by title (case-insensitive)
-                    game_exists_at_index = -1
-                    for i, existing_game in enumerate(all_downloads):
-                        if existing_game.get('title', '').lower() == game_title_lower:
-                            game_exists_at_index = i
-                            break
-                    
-                    if game_exists_at_index != -1:
-                        # Game exists, check if it needs update
-                        existing_game = all_downloads[game_exists_at_index]
-                        if existing_game != game_data:
-                            all_downloads[game_exists_at_index] = game_data
-                            print(f"Updated existing game: {game_title}")
-                            updated_games_count += 1
-                        else:
-                            print(f"No changes detected for: {game_title}")
-                    else:
-                        # Game does not exist, add it
-                        all_downloads.append(game_data)
-                        existing_titles.add(game_title_lower)
-                        new_games_found += 1
-                        print(f"Added new game: {game_title}")
+                # Calculate progress percentage and estimated time remaining
+                progress = (idx / total_games) * 100
+                elapsed_time = time.time() - start_time
+                if idx > 1:  # Only calculate ETA after first game
+                    avg_time_per_game = elapsed_time / (idx - 1)
+                    remaining_games = total_games - idx
+                    eta_seconds = int(avg_time_per_game * remaining_games)
+                    eta_str = f"ETA: {eta_seconds//60}m {eta_seconds%60}s"
                 else:
-                    print(f"Skipping game due to missing data or error: {game_url}")
+                    eta_str = "Calculating ETA..."
+                
+                # Update progress in the same line
+                print(f"\r{' ' * 100}\r", end='')
+                print(f"📊 Progress: {idx}/{total_games} ({progress:.1f}%) | "
+                      f"✅ {success_count} | ❌ {error_count} | {eta_str}", 
+                      end='', flush=True)
+                
+                try:
+                    game_data = parse_game_page(game_url, session)
+                    
+                    if game_data:
+                        # Normalize the title for comparison
+                        game_title = game_data.get('title', '').strip()
+                        if not game_title:
+                            print(f"\n⚠️ Warning: Game data has no title, skipping: {game_url}")
+                            continue
+                            
+                        game_title_lower = game_title.lower()
+                        
+                        # Check if game already exists by title (case-insensitive)
+                        game_exists_at_index = -1
+                        for i, existing_game in enumerate(all_downloads):
+                            if existing_game.get('title', '').lower() == game_title_lower:
+                                game_exists_at_index = i
+                                break
+                        
+                        if game_exists_at_index != -1:
+                            # Game exists, check if it needs update
+                            existing_game = all_downloads[game_exists_at_index]
+                            if existing_game != game_data:
+                                all_downloads[game_exists_at_index] = game_data
+                                print(f"\n🔄 Updated: {game_title}")
+                                updated_games_count += 1
+                            # else: No changes needed
+                        else:
+                            # Game does not exist, add it
+                            all_downloads.append(game_data)
+                            existing_titles.add(game_title_lower)
+                            new_games_found += 1
+                            success_count += 1
+                            processed_urls.add(game_url)
+                            print(f"\n✅ Added: {game_title}")
+                            
+                            # Save progress every 10 successful operations or every minute
+                            if success_count % 10 == 0 or (time.time() - last_save) > 60:
+                                save_progress({
+                                    'processed_urls': list(processed_urls),
+                                    'success_count': success_count,
+                                    'error_count': error_count,
+                                    'last_save': time.time()
+                                }, progress_file)
+                                last_save = time.time()
+                    else:
+                        print(f"\n⚠️ Skipping: Could not parse game data from {game_url}")
+                        error_count += 1
+                        # Still mark as processed to avoid retrying
+                        processed_urls.add(game_url)
+                    
+                    # Add a small delay between requests, but make it variable
+                    # Start with 0.5s delay, but increase if we get rate limited
+                    time.sleep(0.5 + (error_count * 0.1))  # Slightly increase delay after errors
+                    
+                except Exception as e:
+                    error_count += 1
+                    print(f"\n❌ Error processing {game_url}: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    # Don't mark as processed on error, so we can retry
+                    # Add a longer delay after errors
+                    time.sleep(2)
+                    continue  # Continue with next game even if one fails
                     
         except Exception as e:
             print(f"Error during processing: {e}")
@@ -618,13 +805,33 @@ def main(local_html_path=None):
             traceback.print_exc()
             
         finally:
-            print(f"\nProcessing complete. Found {new_games_found} new and updated {updated_games_count} existing games.")
+            # Print a nice summary
+            print("\n" + "="*60)
+            print("✨ SCRAPING COMPLETE! 🎮".center(60))
+            print("="*60)
+            
+            total_games = len(all_downloads)
+            total_uris = sum(len(game.get('uris', [])) for game in all_downloads)
+            
+            # If no new games were found, show a different message
+            if new_games_found == 0 and updated_games_count == 0:
+                print("\n✅ No new games found. Your database is up to date!")
+            else:
+                print(f"\n✅ Successfully processed {total_games} games!")
+                if new_games_found > 0:
+                    print(f"   - Added {new_games_found} new games")
+                if updated_games_count > 0:
+                    print(f"   - Updated {updated_games_count} existing games")
+            
+            print(f"\n📊 Total games in database: {total_games}")
+            print(f"📥 Total download URIs collected: {total_uris}")
             
             if new_games_found > 0 or updated_games_count > 0:
-                print(f"Saving {len(all_downloads)} games to {JSON_FILE_PATH}...")
-                if save_downloads(JSON_FILE_PATH, all_downloads):
-                    print("Successfully saved game data to JSON file.")
+                print(f"\n💾 Saving {len(all_downloads)} games...")
+                if save_downloads(JSON_FILE_PATH, all_downloads, broad_json_path):
+                    print("✅ Successfully saved game data to JSON file.")
                     
+                    # Prepare commit message
                     commit_parts = []
                     if new_games_found > 0:
                         commit_parts.append(f"{new_games_found} new")
@@ -638,11 +845,11 @@ def main(local_html_path=None):
                     
                     git_commit_and_push(JSON_FILE_PATH, commit_message)
                 else:
-                    print("Error: Failed to save game data to JSON file.")
-            else:
-                print("No new or updated games found to save.")
-
-    print("Scraper finished.")
+                    print("❌ Error: Failed to save game data to JSON file.")
+            
+            print("\n" + "="*60)
+            print("🎉 All done! Your game database is now up to date.".center(60))
+            print("="*60 + "\n")
 
 # Moved create_json_if_not_exists to be defined before main or ensure it's globally available if main calls it.
 # The original placement was fine as it's defined globally before the second __main__ block.
@@ -669,7 +876,7 @@ def create_json_if_not_exists():
                 print(f"Warning: {JSON_FILE_PATH} is missing 'downloads' list or is malformed. Re-initializing.")
                 # Re-initialize with a basic structure if malformed
                 initial_data = {
-                    "name": "SteamRip",
+                    "name": "HydraSteam",
                     "downloads": []
                 }
                 with open(JSON_FILE_PATH, 'w', encoding='utf-8') as f:
@@ -677,7 +884,7 @@ def create_json_if_not_exists():
         except json.JSONDecodeError:
             print(f"Error: {JSON_FILE_PATH} is not valid JSON. Re-initializing.")
             initial_data = {
-                "name": "SteamRip",
+                "name": "HydraSteam",
                 "downloads": []
             }
             with open(JSON_FILE_PATH, 'w', encoding='utf-8') as f:
