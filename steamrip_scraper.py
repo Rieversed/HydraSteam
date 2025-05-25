@@ -8,6 +8,75 @@ import subprocess
 import json
 import re
 import signal # Import the signal module
+import time  # For rate limiting
+from urllib.parse import urlparse, urljoin
+
+def extract_direct_download(url, session):
+    """Extract direct download link from supported file hosting services."""
+    try:
+        # Add a small delay to avoid hitting rate limits
+        time.sleep(1)
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://steamrip.com/',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+        
+        response = session.get(url, headers=headers, timeout=30, allow_redirects=True)
+        response.raise_for_status()
+        
+        domain = urlparse(url).netloc.lower()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Handle megadb.net
+        if 'megadb.net' in domain:
+            # Look for download button or link
+            download_btn = soup.find('a', {'id': 'download-url'}) or \
+                          soup.find('a', string=re.compile(r'download', re.I)) or \
+                          soup.find('a', href=re.compile(r'\.(zip|rar|7z|exe|iso)$', re.I))
+            
+            if download_btn and download_btn.get('href'):
+                return urljoin(url, download_btn['href'])
+            
+            # Try to find direct download link in meta refresh or JavaScript
+            meta_refresh = soup.find('meta', {'http-equiv': 'refresh'})
+            if meta_refresh and 'url=' in meta_refresh.get('content', ''):
+                redirect_url = meta_refresh['content'].split('url=')[-1].strip("'\"")
+                return urljoin(url, redirect_url)
+        
+        # Handle buzzheavier.com
+        elif 'buzzheavier.com' in domain:
+            # Look for download button or link
+            download_btn = soup.find('a', string=re.compile(r'download', re.I)) or \
+                          soup.find('button', string=re.compile(r'download', re.I)) or \
+                          soup.find('a', href=re.compile(r'\.(zip|rar|7z|exe|iso)$', re.I))
+            
+            if download_btn and download_btn.get('href'):
+                return urljoin(url, download_btn['href'])
+            
+            # Try to find direct download link in JavaScript
+            for script in soup.find_all('script'):
+                if script.string and 'window.location' in script.string:
+                    js_redirect = re.search(r'window\.location\s*=\s*["\']([^"\']+)["\']', script.string)
+                    if js_redirect:
+                        return urljoin(url, js_redirect.group(1))
+        
+        # If no specific handler matched, try to find any direct download link
+        for link in soup.find_all('a', href=True):
+            href = link['href'].lower()
+            if any(ext in href for ext in ['.zip', '.rar', '.7z', '.exe', '.iso']):
+                return urljoin(url, link['href'])
+        
+        return None
+        
+    except Exception as e:
+        print(f"Error extracting direct download from {url}: {e}")
+        return None
 
 # Function to parse date strings into a consistent format
 def parse_date(date_str):
@@ -217,17 +286,45 @@ def extract_game_details(game_url, session):
     if not download_urls:
         print(f"Warning: Download URLs NOT FOUND for {game_url}")
 
-    # Process download URLs to ensure they have https:// prefix
+    # Process download URLs to ensure they have https:// prefix and follow redirects
     processed_uris = []
+    seen_urls = set()  # To avoid duplicates
+    
     for url in download_urls:
-        if url.startswith('//'):
-            # Convert protocol-relative URL to https
-            processed_uris.append('https:' + url if url.startswith('//') else url)
-        elif not url.startswith(('http://', 'https://')):
-            # Add https:// if no protocol is specified
-            processed_uris.append('https://' + url)
-        else:
+        try:
+            # Normalize the URL first
+            if url.startswith('//'):
+                url = 'https:' + url
+            elif not url.startswith(('http://', 'https://')):
+                url = 'https://' + url
+                
+            # Skip if we've already processed this URL
+            if url in seen_urls:
+                continue
+                
+            seen_urls.add(url)
+            
+            # Check if this is a URL we need to follow
+            domain = urlparse(url).netloc.lower()
+            if 'megadb.net' in domain or 'buzzheavier.com' in domain:
+                print(f"Following URL to find direct download: {url}")
+                direct_url = extract_direct_download(url, session)
+                if direct_url and direct_url != url:
+                    print(f"Found direct download URL: {direct_url}")
+                    if direct_url not in seen_urls:
+                        processed_uris.append(direct_url)
+                        seen_urls.add(direct_url)
+                    continue
+            
+            # For all other URLs, just add them as-is
             processed_uris.append(url)
+            
+        except Exception as e:
+            print(f"Error processing URL {url}: {e}")
+            # Add the original URL if there was an error
+            if url not in seen_urls:
+                processed_uris.append(url)
+                seen_urls.add(url)
     
     # Clean up the title by removing 'Free Download' text
     clean_title = title_str.replace(' Free Download', '').replace(' free download', '').strip()
@@ -558,7 +655,7 @@ def create_json_if_not_exists():
             # Initial structure based on the user-provided steamrip_downloads.json
             # and common Hydra Launcher source structure
             initial_data = {
-                "name": "SteamRip",
+                "name": "HydraSteam",
                 "downloads": []
             }
             json.dump(initial_data, f, indent=4)

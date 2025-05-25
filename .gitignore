@@ -2,6 +2,24 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # Environments
 .env
@@ -15,6 +33,10 @@ env/
 .vscode/
 *.swp
 *.swo
+*~
+.project
+.pydevproject
+.settings/
 
 # OS generated files
 .DS_Store
@@ -28,14 +50,32 @@ Thumbs.db
 # Local HTML files (if used for testing)
 *.html
 
+# Logs and databases
+*.log
+*.sql
+*.sqlite
+
 # Sensitive information / credentials
 secrets.json
 credentials.json
 *.pem
 *.key
+*.cert
+*.crt
 
-# Don't ignore the main JSON file, README, or requirements
-!steamrip_downloads.json
+# Project specific
+!hydrasteam.json  # Keep tracking the main JSON file
+!steamrip_scraper.py
 !README.md
 !requirements.txt
-!steamrip_scraper.py
+
+# Local development settings
+local_settings.py
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Virtual environments
+venv.bak/
+venv*/
