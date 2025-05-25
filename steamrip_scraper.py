@@ -345,12 +345,8 @@ def extract_game_details(game_url, session):
                 
             domain = urlparse(url).netloc.lower()
             
-            # Skip direct link extraction for megadb.net and buzzheavier.com
-            # These will be handled in save_downloads
-            if any(d in domain for d in ['megadb.net', 'buzzheavier.com']):
-                continue  # Skip processing these URLs
-            
-            # Add the URL to our processed list if it's not a duplicate
+            # For megadb.net and buzzheavier.com, we'll include the direct links
+            # as they'll be properly handled in save_downloads
             if url not in seen_urls:
                 processed_uris.append(url)
                 seen_urls.add(url)
