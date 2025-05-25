@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+venv/
+ENV/
+env/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Local HTML files (if used for testing)
+*.html
+
+# Sensitive information / credentials
+secrets.json
+credentials.json
+*.pem
+*.key
+
+# Don't ignore the main JSON file, README, or requirements
+!steamrip_downloads.json
+!README.md
+!requirements.txt
+!steamrip_scraper.py
+steamrip_scraper.py
+requirements.txt
