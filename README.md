@@ -1,4 +1,5 @@
 # HydraSteam
+<<<<<<< HEAD
 Automated download source management for [HydraLauncher](https://hydralauncher.gg/)
 
 ## 📋 Description
@@ -6,6 +7,18 @@ This repository contains automatically generated JSON files that provide downloa
 
 ## 📥 Usage
 
+=======
+![{2533B7F1-1505-451E-BE2E-8D5319E65BE8}](https://github.com/user-attachments/assets/6d5ca7e1-35f9-41bc-8e20-20c05ffeeccc)
+
+
+Automated download source management for [HydraLauncher](https://hydralauncher.gg/)
+
+## 📋 Description
+This repository contains automatically generated JSON files that provide download source information for use with HydraLauncher. The data is collected for educational and research purposes only.
+
+## 📥 Usage
+
+>>>>>>> 937ed2026ad5722aa383117896882f97ae3f3c68
 ### Adding Sources to HydraLauncher
 
 **Main Source (Gofile.io links only):**
