@@ -44,7 +44,7 @@ def main():
     # Configuration
     input_files = ['hydrasteam.json', 'hydrasteam_broad.json']
     output_base_dir = 'split_files'
-    games_per_file = 50  # Number of games per output file
+    games_per_file = 200  # Increased from 50 to 200 to create fewer, larger files
     
     # Process each input file
     for input_file in input_files:
