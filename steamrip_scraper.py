@@ -456,7 +456,8 @@ def load_existing_downloads(filepath):
 def save_downloads(filepath, downloads_data, broad_filepath=None):
     """
     Save the downloads data to JSON files, separating gofile.io links from others.
-    gofile.io links go to the main file, all games go to the broad file with non-gofile links.
+    - hydrasteam.json: Only games with gofile links (only gofile links included)
+    - hydrasteam_broad.json: All games with all non-gofile links
     """
     try:
         # Separate downloads into main (gofile) and broad (all others) lists
@@ -467,43 +468,56 @@ def save_downloads(filepath, downloads_data, broad_filepath=None):
             if not game.get('uris'):
                 continue
                 
-            # Create copies for main and broad
-            game_copy = game.copy()
-            gofile_uris = []
-            other_uris = []
+            # Create a clean copy of the game data with title first
+            game_data = {
+                'title': game.get('title', ''),
+                'fileSize': game.get('fileSize', ''),
+                'uploadDate': game.get('uploadDate', ''),
+                'uris': game.get('uris', [])
+            }
             
             # Separate URIs
-            for uri in game['uris']:
-                if 'gofile.io' in uri.lower():
-                    gofile_uris.append(uri)
-                else:
-                    other_uris.append(uri)
+            gofile_uris = [uri for uri in game['uris'] if 'gofile.io' in uri.lower()]
+            other_uris = [uri for uri in game['uris'] if 'gofile.io' not in uri.lower()]
             
             # Add to main downloads if it has any gofile URIs
             if gofile_uris:
-                main_game = game_copy.copy()
+                main_game = game_data.copy()
                 main_game['uris'] = gofile_uris
                 main_downloads.append(main_game)
             
-            # Always add to broad downloads with non-gofile URIs (if any)
-            broad_game = game_copy.copy()
-            broad_game['uris'] = other_uris if other_uris else []
-            broad_downloads.append(broad_game)
+            # Always add to broad downloads with non-gofile URIs (if any exist)
+            if other_uris or not gofile_uris:  # Include games with no links if they don't have gofile links
+                broad_game = game_data.copy()
+                broad_game['uris'] = other_uris
+                broad_downloads.append(broad_game)
+        
+        # Create output directory if it doesn't exist
+        if filepath:
+            os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+        if broad_filepath:
+            os.makedirs(os.path.dirname(os.path.abspath(broad_filepath)), exist_ok=True)
         
         # Save main downloads (only gofile URIs)
         if filepath and main_downloads:
-            os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+            # Create the output structure with name first
+            output = {
+                "name": "HydraSteam",
+                "downloads": main_downloads
+            }
             with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump({"name": "HydraSteam", "downloads": main_downloads}, 
-                         f, ensure_ascii=False, indent=2, sort_keys=True)
+                json.dump(output, f, ensure_ascii=False, indent=2, sort_keys=False)
             print(f"✅ Saved {len(main_downloads)} items to {filepath}")
         
-        # Save broad downloads (only non-gofile URIs)
+        # Save broad downloads (all games with non-gofile URIs)
         if broad_filepath and broad_downloads:
-            os.makedirs(os.path.dirname(os.path.abspath(broad_filepath)), exist_ok=True)
+            # Create the output structure with name first
+            output = {
+                "name": "HydraSteam Broad",
+                "downloads": broad_downloads
+            }
             with open(broad_filepath, 'w', encoding='utf-8') as f:
-                json.dump({"name": "HydraSteam Broad", "downloads": broad_downloads},
-                         f, ensure_ascii=False, indent=2, sort_keys=True)
+                json.dump(output, f, ensure_ascii=False, indent=2, sort_keys=False)
             print(f"✅ Saved {len(broad_downloads)} items to {broad_filepath}")
             
         return True

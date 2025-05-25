@@ -66,6 +66,7 @@ credentials.json
 # Project specific
 !hydrasteam.json  # Keep tracking the main JSON file
 !steamrip_scraper.py
+!hydrasteam_broad.json
 !README.md
 !requirements.txt
 
