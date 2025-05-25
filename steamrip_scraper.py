@@ -284,7 +284,7 @@ def extract_game_details(game_url, session):
         
         # 2. Fallback: find any link within common download sections or with known hostnames
         if not download_urls:
-            known_hosts = ['megadb.net', 'pixeldrain.com', 'gofile.io', '1fichier.com', 'mega.nz', 'buzzheavier.com'] # Add more if needed
+            known_hosts = ['megadb.net', 'pixeldrain.com', 'gofile.io', '1fichier.com', 'mega.nz', 'buzzheavier.com', 'datanodes.to']
             all_links = soup.find_all('a', href=True)
             for a_tag in all_links:
                 href = a_tag['href']
@@ -472,7 +472,7 @@ def save_downloads(filepath, downloads_data, broad_filepath=None):
                 'uris': game.get('uris', [])
             }
             
-            # Separate URIs
+            # Separate URIs - only gofile.io in main, everything else in broad
             gofile_uris = [uri for uri in game['uris'] if 'gofile.io' in uri.lower()]
             other_uris = [uri for uri in game['uris'] if 'gofile.io' not in uri.lower()]
             
@@ -483,6 +483,7 @@ def save_downloads(filepath, downloads_data, broad_filepath=None):
                 main_downloads.append(main_game)
             
             # Always add to broad downloads with non-gofile URIs (if any exist)
+            # This includes datanodes.to and other non-gofile links
             if other_uris or not gofile_uris:  # Include games with no links if they don't have gofile links
                 broad_game = game_data.copy()
                 broad_game['uris'] = other_uris
