@@ -455,10 +455,11 @@ def load_existing_downloads(filepath):
 
 def save_downloads(filepath, downloads_data, broad_filepath=None):
     """
-    Save the downloads data to JSON files, separating megadb/buzzheavier links into a separate file.
+    Save the downloads data to JSON files, separating gofile.io links from others.
+    gofile.io links go to the main file, all games go to the broad file with non-gofile links.
     """
     try:
-        # Separate downloads into main and broad lists
+        # Separate downloads into main (gofile) and broad (all others) lists
         main_downloads = []
         broad_downloads = []
         
@@ -467,37 +468,37 @@ def save_downloads(filepath, downloads_data, broad_filepath=None):
                 continue
                 
             # Create copies for main and broad
-            main_game = game.copy()
-            broad_game = game.copy()
-            main_uris = []
-            broad_uris = []
+            game_copy = game.copy()
+            gofile_uris = []
+            other_uris = []
             
             # Separate URIs
             for uri in game['uris']:
-                if any(d in uri.lower() for d in ['megadb.net', 'buzzheavier.com']):
-                    broad_uris.append(uri)
+                if 'gofile.io' in uri.lower():
+                    gofile_uris.append(uri)
                 else:
-                    main_uris.append(uri)
+                    other_uris.append(uri)
             
-            # Add to main downloads if it has any non-broad URIs
-            if main_uris:
-                main_game['uris'] = main_uris
+            # Add to main downloads if it has any gofile URIs
+            if gofile_uris:
+                main_game = game_copy.copy()
+                main_game['uris'] = gofile_uris
                 main_downloads.append(main_game)
             
-            # Add to broad downloads if it has any broad URIs
-            if broad_uris and broad_filepath:
-                broad_game['uris'] = broad_uris
-                broad_downloads.append(broad_game)
+            # Always add to broad downloads with non-gofile URIs (if any)
+            broad_game = game_copy.copy()
+            broad_game['uris'] = other_uris if other_uris else []
+            broad_downloads.append(broad_game)
         
-        # Save main downloads (only non-broad URIs)
-        if filepath:
+        # Save main downloads (only gofile URIs)
+        if filepath and main_downloads:
             os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump({"name": "HydraSteam", "downloads": main_downloads}, 
                          f, ensure_ascii=False, indent=2, sort_keys=True)
             print(f"✅ Saved {len(main_downloads)} items to {filepath}")
         
-        # Save broad downloads (only broad URIs)
+        # Save broad downloads (only non-gofile URIs)
         if broad_filepath and broad_downloads:
             os.makedirs(os.path.dirname(os.path.abspath(broad_filepath)), exist_ok=True)
             with open(broad_filepath, 'w', encoding='utf-8') as f:
@@ -509,8 +510,6 @@ def save_downloads(filepath, downloads_data, broad_filepath=None):
         
     except Exception as e:
         print(f"❌ Error saving files: {e}")
-        import traceback
-        traceback.print_exc()
         return False
 
 def git_commit_and_push(filepath, commit_message):
@@ -543,28 +542,7 @@ def git_commit_and_push(filepath, commit_message):
     except FileNotFoundError:
         print("Git command not found. Ensure Git is installed and in your PATH.")
 
-def save_progress(progress_data, filepath='scraper_progress.json'):
-    """Save progress data to a file."""
-    try:
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(progress_data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"Could not save progress: {e}")
-
-def load_progress(filepath='scraper_progress.json'):
-    """Load progress data from a file."""
-    if os.path.exists(filepath):
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Could not load progress: {e}")
-    return {
-        'processed_urls': [],
-        'success_count': 0,
-        'error_count': 0,
-        'last_save': 0
-    }
+# Removed progress tracking functions as requested
 
 def main(local_html_path=None):
     print("Starting scraper...")
@@ -582,13 +560,10 @@ def main(local_html_path=None):
     existing_downloads = load_existing_downloads(JSON_FILE_PATH)
     print(f"Loaded {len(existing_downloads)} existing downloads from {JSON_FILE_PATH}")
     
-    # Load progress if exists
-    progress_file = 'scraper_progress.json'
-    progress = load_progress(progress_file)
-    processed_urls = set(progress.get('processed_urls', []))
-    success_count = progress.get('success_count', 0)
-    error_count = progress.get('error_count', 0)
-    last_save = progress.get('last_save', 0)
+    # Track processed URLs to avoid duplicates
+    processed_urls = set()
+    success_count = 0
+    error_count = 0
     
     new_games_found = 0
     updated_games_count = 0
@@ -596,16 +571,7 @@ def main(local_html_path=None):
 
     # Signal handler for graceful exit on Ctrl+C
     def signal_handler(sig, frame):
-        print("\n\n Script interrupted! Saving progress...")
-        if 'processed_urls' in globals() and 'success_count' in globals() and 'error_count' in globals():
-            save_progress({
-                'processed_urls': list(processed_urls),
-                'success_count': success_count,
-                'error_count': error_count,
-                'last_save': time.time()
-            }, progress_file)
-            print(f"Progress saved. Success: {success_count if 'success_count' in globals() else 0}, "
-                  f"Errors: {error_count if 'error_count' in globals() else 0}")
+        print("\n\nScript interrupted! Exiting...")
         sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -770,15 +736,9 @@ def main(local_html_path=None):
                             processed_urls.add(game_url)
                             print(f"\n✅ Added: {game_title}")
                             
-                            # Save progress every 10 successful operations or every minute
-                            if success_count % 10 == 0 or (time.time() - last_save) > 60:
-                                save_progress({
-                                    'processed_urls': list(processed_urls),
-                                    'success_count': success_count,
-                                    'error_count': error_count,
-                                    'last_save': time.time()
-                                }, progress_file)
-                                last_save = time.time()
+                            # Save progress every 10 successful operations
+                            if success_count % 10 == 0:
+                                save_downloads(JSON_FILE_PATH, all_downloads, os.path.join(os.path.dirname(JSON_FILE_PATH), 'hydrasteam_broad.json'))
                     else:
                         print(f"\n⚠️ Skipping: Could not parse game data from {game_url}")
                         error_count += 1
