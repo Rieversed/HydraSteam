@@ -10,9 +10,12 @@ This repository contains automatically generated JSON files that provide downloa
 ### Complete Sources
 
 **Main Source (Gofile.io links only):**
-```bash
-https://raw.githubusercontent.com/Rieversed/HydraSteam/main/hydrasteam.json
+**Main Source Chunks (200 games per file):**
 ```
+https://raw.githubusercontent.com/Rieversed/HydraSteam/main/split_files/hydrasteam/hydrasteam_part_1.json  # 200 games
+https://raw.githubusercontent.com/Rieversed/HydraSteam/main/split_files/hydrasteam/hydrasteam_part_2.json  # 181 games
+```
+
 
 **Broad Source (Includes additional mirrors and sources):**
 ```bash
